@@ -1,0 +1,65 @@
+version: "3.8" # версия docker compose
+
+services:
+
+  app:
+    build:
+      context: . # путь к Dockerfile
+      dockerfile: Dockerfile # имя Dockerfile
+    container_name: fastik-app # имя контейнера
+    env_file:
+      - .env # путь к файлу с переменными окружения
+    ports:
+      - "8001:8000" # проброс портов внешний:внутренный
+    environment: # переменные окружения
+      - CELERY_RESULT_EXPIRES=10
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - DB_URL=postgresql://admin:admin@postgres:5432/admin
+      - SECRET_KEY=${SECRET_KEY}
+    command:  sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0"  # комманда на запуск
+    logging: # настройка логов
+      options:
+        max-size: '500M' # максимальный размер логов
+        max-file: '5' # максимальное колличество файлов логов
+    restart: always # перезапуск контейнера
+    volumes:
+      - .:/app # маппинг файлов
+    depends_on: # список зависимостей
+      - db
+      - redis
+      - celery-worker
+
+  db:
+    image: postgres:15.4-alpine3.18 # образ на основании которого будет создан контейнер
+    container_name: fastik-db
+    hostname: postgres # имя хоста для подключения из другого контейнера
+    environment:
+      - POSTGRES_DB=admin
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_HOST_AUTH_METHOD=trust
+
+  redis:
+    image: redis:7.0.4-alpine
+    container_name: fastik-redis
+    hostname: redis
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastik-celery-worker
+    environment:
+      - REDIS_URL=redis://redis:6379/2
+      - CELERY_RESULT_EXPIRES=10
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - DB_URL=postgresql://admin:admin@postgres:5432/admin
+    command: celery -A core.settings:celery worker -l INFO
+    restart: always
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
